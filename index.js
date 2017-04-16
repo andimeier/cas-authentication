@@ -284,7 +284,11 @@ CASAuthentication.prototype._login = function(req, res, next) {
 
 /**
  * Indicates the client to redirect to the CAS login. This will be indicated
- * by means of HTTP headers
+ * by means of HTTP headers. The client has to do the actual redirect. This is necessary
+ * for AJAX requests which should trigger a CAS login. The AJAX request should not be
+ * redirected (this will most probably break the SPA), but by parsing the headers, the client should
+ * be notified that it should do a redirect on its own. The redirect target will be prepared for
+ * the client by this function in the configured HTTP header.
  */
 CASAuthentication.prototype._indicateRedirect = function(req, res) {
     var loginUrl;
@@ -299,7 +303,7 @@ CASAuthentication.prototype._indicateRedirect = function(req, res) {
         renew: this.renew
     };
 
-    // Redirect to the CAS login.
+    // request redirect to the CAS login from the client
     loginUrl =  this.cas_url + url.format({
             pathname: '/login',
             query: query
