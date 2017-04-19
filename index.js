@@ -11,8 +11,7 @@ var url           = require('url'),
 var AUTH_TYPE = {
     BOUNCE          : 0,
     BOUNCE_REDIRECT : 1,
-    BLOCK           : 2,
-    BOUNCE_AJAX     : 3
+    BLOCK           : 2
 };
 
 /**
@@ -27,8 +26,6 @@ var AUTH_TYPE = {
  * @property {string}  [session_name='cas_user']
  * @property {string}  [session_info=false]
  * @property {boolean} [destroy_session=false]
- * @property {string} [ajaxBounceHeader='Cas-Login']
- * @property {number} [ajaxBounceHttpStatus=401]
  */
 
 /**
@@ -171,12 +168,8 @@ function CASAuthentication(options) {
     this.session_info    = [ '2.0', '3.0', 'saml1.1' ].indexOf(this.cas_version) >= 0 && options.session_info !== undefined ? options.session_info : false;
     this.destroy_session = options.destroy_session !== undefined ? !!options.destroy_session : false;
 
-    this.ajaxBounceHeader = options.ajaxBounceHeader !== undefined ? !!options.ajaxBounceHeader : 'Cas-Login';
-    this.ajaxBounceHttpStatus = options.ajaxBounceHttpStatus !== undefined ? !!options.ajaxBounceHttpStatus : 401;
-
     // Bind the prototype routing methods to this instance of CASAuthentication.
     this.bounce          = this.bounce.bind(this);
-    this.bounce_ajax     = this.bounce_ajax.bind(this);
     this.bounce_redirect = this.bounce_redirect.bind(this);
     this.block           = this.block.bind(this);
     this.logout          = this.logout.bind(this);
@@ -191,17 +184,6 @@ CASAuthentication.prototype.bounce = function(req, res, next) {
 
     // Handle the request with the bounce authorization type.
     this._handle(req, res, next, AUTH_TYPE.BOUNCE);
-};
-
-/**
- * Bounces a request with CAS authentication. If the user's session is not
- * already validated with CAS, their request will be redirected to the CAS
- * login page by indicating a redirect to the AJAX call (via HTTP headers).
- */
-CASAuthentication.prototype.bounce_ajax = function(req, res, next) {
-
-    // Handle the request with the bounce authorization type.
-    this._handle(req, res, next, AUTH_TYPE.BOUNCE_AJAX);
 };
 
 /**
@@ -272,10 +254,6 @@ CASAuthentication.prototype._handle = function(req, res, next, authType) {
     else if (req.query && req.query.ticket) {
         this._handleTicket(req, res, next);
     }
-    // If the authentication type is BLOCK, simply send a 401 response.
-    else if (authType === AUTH_TYPE.BOUNCE_AJAX) {
-        this._indicateRedirect(req, res, next);
-    }
     // Otherwise, redirect the user to the CAS login.
     else {
         this._login(req, res, next);
@@ -304,35 +282,6 @@ CASAuthentication.prototype._login = function(req, res, next) {
     }));
 };
 
-/**
- * Indicates the client to redirect to the CAS login. This will be indicated
- * by means of HTTP headers. The client has to do the actual redirect. This is necessary
- * for AJAX requests which should trigger a CAS login. The AJAX request should not be
- * redirected (this will most probably break the SPA), but by parsing the headers, the client should
- * be notified that it should do a redirect on its own. The redirect target will be prepared for
- * the client by this function in the configured HTTP header.
- */
-CASAuthentication.prototype._indicateRedirect = function(req, res) {
-    var loginUrl;
-
-    // Save the return URL in the session. If an explicit return URL is set as a
-    // query parameter, use that. Otherwise, just use the URL from the request.
-    req.session.cas_return_to = req.query.returnTo || url.parse(req.originalUrl).path;
-
-    // Set up the query parameters.
-    var query = {
-        service: this.service_url + url.parse(req.originalUrl).pathname,
-        renew: this.renew
-    };
-
-    // request redirect to the CAS login from the client
-    loginUrl =  this.cas_url + url.format({
-            pathname: '/login',
-            query: query
-        });
-    res.set(this.ajaxBounceHeader, loginUrl);
-    res.status(this.ajaxBounceHttpStatus).end();
-};
 
 /**
  * Logout the currently logged in CAS user.
