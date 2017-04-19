@@ -79,7 +79,12 @@ function CASAuthentication(options) {
                 try {
                     var failure = result.serviceresponse.authenticationfailure;
                     if (failure) {
-                        return callback(new Error('CAS authentication failed (' + failure.$.code + ').'));
+                        //return callback(new Error('CAS authentication failed (' + failure.$.code + ').'));
+                        return callback({
+                            errorMessage: 'CAS authentication failed',
+                            code: failure.$.code,
+                            description: failure._
+                        });
                     }
                     var success = result.serviceresponse.authenticationsuccess;
                     if (success) {
@@ -225,11 +230,16 @@ CASAuthentication.prototype.block = function(req, res, next) {
  */
 CASAuthentication.prototype._handle = function(req, res, next, authType) {
 
+    debugger;
     // If the session has been validated with CAS, no action is required.
     if (req.session[ this.session_name ]) {
         // If this is a bounce redirect, redirect the authenticated user.
         if (authType === AUTH_TYPE.BOUNCE_REDIRECT) {
-            res.redirect(req.session.cas_return_to);
+            if (req.query.redirectTo) {
+                res.redirect(req.query.returnTo);
+            } else {
+                res.redirect(req.session.cas_return_to);
+            }
         }
         // Otherwise, allow them through to their request.
         else {
@@ -240,11 +250,23 @@ CASAuthentication.prototype._handle = function(req, res, next, authType) {
     else if (this.is_dev_mode) {
         req.session[ this.session_name ] = this.dev_mode_user;
         req.session[ this.session_info ] = this.dev_mode_info;
+
+        // AJAX mode:
+        if (req.query && req.query.returnTo) {
+            console.info('devmode, returnTo detected: ' + req.query.returnTo);
+            res.redirect(req.query.returnTo);
+            return;
+        }
+
+        console.info('devmode, but no returnTo detected');
+
+
+        // standard mode:
         next();
     }
     // If the authentication type is BLOCK, simply send a 401 response.
     else if (authType === AUTH_TYPE.BLOCK) {
-        res.sendStatus(401);
+        res.status(401).end();
     }
     // If there is a CAS ticket in the query string, validate it with the CAS server.
     else if (req.query && req.query.ticket) {
@@ -342,6 +364,7 @@ CASAuthentication.prototype.logout = function(req, res, next) {
  */
 CASAuthentication.prototype._handleTicket = function(req, res, next) {
 
+    debugger;
     var requestOptions = {
         host: this.cas_host,
         port: this.cas_port
@@ -352,7 +375,7 @@ CASAuthentication.prototype._handleTicket = function(req, res, next) {
         requestOptions.path = url.format({
             pathname: this.cas_path + this._validateUri,
             query: {
-                service: this.service_url + url.parse(req.originalUrl).pathname,
+                service: this.service_url,
                 ticket: req.query.ticket
             }
         });
@@ -387,6 +410,7 @@ CASAuthentication.prototype._handleTicket = function(req, res, next) {
         };
     }
 
+    console.info('requesting ticket validation of ticket ' + req.query.ticket);
     var request = this.request_client.request(requestOptions, function(response) {
         response.setEncoding( 'utf8' );
         var body = '';
@@ -394,12 +418,14 @@ CASAuthentication.prototype._handleTicket = function(req, res, next) {
             return body += chunk;
         }.bind(this));
         response.on('end', function() {
+            console.info('validating ticket ' + req.query.ticket);
             this._validate(body, function(err, user, attributes) {
                 if (err) {
-                    console.log(err);
+                    console.info(err);
                     res.sendStatus(401);
                 }
                 else {
+                    console.info('YES, valid validation OK: user = ' + user);
                     req.session[ this.session_name ] = user;
                     if (this.session_info) {
                         req.session[ this.session_info ] = attributes || {};
