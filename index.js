@@ -1,6 +1,5 @@
 var url = require('url');
-var http = require('http');
-var https = require('https');
+var request = require('request');
 var parseXML = require('xml2js').parseString;
 var XMLprocessors = require('xml2js/lib/processors');
 
@@ -18,7 +17,7 @@ var AUTH_TYPE = {
  * @typedef {Object} CAS_options
  * @property {string}  cas_url
  * @property {string}  service_url
- * @property {('1.0'|'2.0'|'3.0'|'saml1.1')} [cas_version='3.0']
+ * @property {('1.0'|'2.0'|'3.0')} [cas_version='3.0']
  * @property {boolean} [renew=false]
  * @property {boolean} [is_dev_mode=false]
  * @property {string}  [dev_mode_user='']
@@ -29,10 +28,78 @@ var AUTH_TYPE = {
  */
 
 /**
+ * validates a ticket for CAS protocol version 1.0
+ *
+ * @param body {string} the email body which should be parsed in order to check the ticket validation
+ * @param callback {function} callback function that will be called with (err, user, userAttributes)
+ */
+CASAuthentication.prototype.validateTicketCas1 = function (body, callback) {
+    var lines = body.split('\n');
+    if (lines[0] === 'yes' && lines.length >= 2) {
+        return callback(null, lines[1]);
+    }
+    else if (lines[0] === 'no') {
+        return callback(new Error('CAS authentication failed.'));
+    }
+    else {
+        return callback(new Error('Response from CAS server was bad.'));
+    }
+};
+
+
+/**
+ * validates a ticket for CAS protocol version 2.0 or 3.0
+ *
+ * @param body {string} the email body which should be parsed in order to check the ticket validation
+ * @param callback {function} callback function that will be called with (err, user, userAttributes)
+ */
+CASAuthentication.prototype.validateTicketCas23 = function (body, callback) {
+    parseXML(body, {
+        trim: true,
+        normalize: true,
+        explicitArray: false,
+        tagNameProcessors: [XMLprocessors.normalize, XMLprocessors.stripPrefix]
+    }, function (err, result) {
+        if (err) {
+            console.info('(((((---))))))) Bad response from CAS server');
+            return callback(new Error('Response from CAS server was bad.'));
+        }
+        //try {
+        console.info('(((((---))))))) response: ' + JSON.stringify(result));
+        var failure = result.serviceresponse.authenticationfailure;
+        if (failure) {
+            //return callback(new Error('CAS authentication failed (' + failure.$.code + ').'));
+            console.info('(((((---))))))) CAS authentication failed');
+            return callback({
+                errorMessage: 'CAS authentication failed',
+                code: failure.$.code,
+                description: failure._
+            });
+        }
+        var success = result.serviceresponse.authenticationsuccess;
+        if (success) {
+            return callback(null, success.user, success.attributes);
+        }
+        else {
+            console.info('(((((---))))))) CAS authentication failed apparently');
+            return callback(new Error('CAS authentication failed.'));
+        }
+        //}
+        //catch (err) {
+        //    console.info('(((((---))))))) exception when doing CAS authentication: ' + JSON.stringify(err));
+        //    return callback(new Error('CAS authentication failed.'));
+        //}
+    });
+};
+
+
+/**
  * @param {CAS_options} options
  * @constructor
  */
 function CASAuthentication(options) {
+
+    console.info('init CAS, options are: ' + JSON.stringify(options));
 
     if (!options || typeof options !== 'object') {
         throw new Error('CAS Authentication was not given a valid configuration object.');
@@ -48,116 +115,24 @@ function CASAuthentication(options) {
 
     if (this.cas_version === '1.0') {
         this._validateUri = '/validate';
-        this._validate = function (body, callback) {
-            var lines = body.split('\n');
-            if (lines[0] === 'yes' && lines.length >= 2) {
-                return callback(null, lines[1]);
-            }
-            else if (lines[0] === 'no') {
-                return callback(new Error('CAS authentication failed.'));
-            }
-            else {
-                return callback(new Error('Response from CAS server was bad.'));
-            }
-        }
+        this._validate = this.validateTicketCas1;
     }
     else if (this.cas_version === '2.0' || this.cas_version === '3.0') {
         this._validateUri = (this.cas_version === '2.0' ? '/serviceValidate' : '/p3/serviceValidate');
-        this._validate = function (body, callback) {
-            parseXML(body, {
-                trim: true,
-                normalize: true,
-                explicitArray: false,
-                tagNameProcessors: [XMLprocessors.normalize, XMLprocessors.stripPrefix]
-            }, function (err, result) {
-                if (err) {
-                    console.info('(((((---))))))) Bad response from CAS server');
-                    return callback(new Error('Response from CAS server was bad.'));
-                }
-                //try {
-                    console.info('(((((---))))))) response: ' + JSON.stringify(result));
-                    var failure = result.serviceresponse.authenticationfailure;
-                    if (failure) {
-                        //return callback(new Error('CAS authentication failed (' + failure.$.code + ').'));
-                        console.info('(((((---))))))) CAS authentication failed');
-                        return callback({
-                            errorMessage: 'CAS authentication failed',
-                            code: failure.$.code,
-                            description: failure._
-                        });
-                    }
-                    var success = result.serviceresponse.authenticationsuccess;
-                    if (success) {
-                        return callback(null, success.user, success.attributes);
-                    }
-                    else {
-                        console.info('(((((---))))))) CAS authentication failed apparently');
-                        return callback(new Error('CAS authentication failed.'));
-                    }
-                //}
-                //catch (err) {
-                //    console.info('(((((---))))))) exception when doing CAS authentication: ' + JSON.stringify(err));
-                //    return callback(new Error('CAS authentication failed.'));
-                //}
-            });
-        }
-    }
-    else if (this.cas_version === 'saml1.1') {
-        this._validateUri = '/samlValidate';
-        this._validate = function (body, callback) {
-            parseXML(body, {
-                trim: true,
-                normalize: true,
-                explicitArray: false,
-                tagNameProcessors: [XMLprocessors.normalize, XMLprocessors.stripPrefix]
-            }, function (err, result) {
-                if (err) {
-                    return callback(new Error('Response from CAS server was bad.'));
-                }
-                try {
-                    var samlResponse = result.envelope.body.response;
-                    var success = samlResponse.status.statuscode.$.Value.split(':')[1];
-                    if (success !== 'Success') {
-                        return callback(new Error('CAS authentication failed (' + success + ').'));
-                    }
-                    else {
-                        var attributes = {};
-                        var attributesArray = samlResponse.assertion.attributestatement.attribute;
-                        if (!(attributesArray instanceof Array)) {
-                            attributesArray = [attributesArray];
-                        }
-                        attributesArray.forEach(function (attr) {
-                            var thisAttrValue;
-                            if (attr.attributevalue instanceof Array) {
-                                thisAttrValue = [];
-                                attr.attributevalue.forEach(function (v) {
-                                    thisAttrValue.push(v._);
-                                });
-                            }
-                            else {
-                                thisAttrValue = attr.attributevalue._;
-                            }
-                            attributes[attr.$.AttributeName] = thisAttrValue;
-                        });
-                        return callback(null, samlResponse.assertion.authenticationstatement.subject.nameidentifier, attributes);
-                    }
-                }
-                catch (err) {
-                    return callback(new Error('CAS authentication failed.'));
-                }
-            });
-        }
-    }
-    else {
+        this._validate = this.validateTicketCas23;
+    } else {
         throw new Error('The supplied CAS version ("' + this.cas_version + '") is not supported.');
     }
 
+    console.log('===========> validate function is: ' + this._validate);
+
     this.cas_url = options.cas_url;
     var parsed_cas_url = url.parse(this.cas_url);
-    this.request_client = parsed_cas_url.protocol === 'http:' ? http : https;
     this.cas_host = parsed_cas_url.hostname;
-    this.cas_port = parsed_cas_url.protocol === 'http:' ? 80 : 443;
     this.cas_path = parsed_cas_url.pathname;
+
+    console.info('----- CAS url: ' + this.cas_url);
+    console.info('----- CAS path: ' + this.cas_path);
 
     this.service_url = options.service_url;
 
@@ -168,7 +143,7 @@ function CASAuthentication(options) {
     this.dev_mode_info = options.dev_mode_info !== undefined ? options.dev_mode_info : {};
 
     this.session_name = options.session_name !== undefined ? options.session_name : 'cas_user';
-    this.session_info = ['2.0', '3.0', 'saml1.1'].indexOf(this.cas_version) >= 0 && options.session_info !== undefined ? options.session_info : false;
+    this.session_info = ['2.0', '3.0'].indexOf(this.cas_version) >= 0 && options.session_info !== undefined ? options.session_info : false;
     this.destroy_session = options.destroy_session !== undefined ? !!options.destroy_session : false;
 
     // Bind the prototype routing methods to this instance of CASAuthentication.
@@ -176,7 +151,10 @@ function CASAuthentication(options) {
     this.bounce_redirect = this.bounce_redirect.bind(this);
     this.block = this.block.bind(this);
     this.logout = this.logout.bind(this);
+
+    console.log('====> cas_url: ' + this.cas_url);
 }
+
 
 /**
  * Bounces a request with CAS authentication. If the user's session is not
@@ -307,188 +285,57 @@ CASAuthentication.prototype.logout = function (req, res, next) {
     res.redirect(this.cas_url + '/logout');
 };
 
-/**
- * Handles the ticket generated by the CAS login requester and validates it with the CAS login acceptor.
- */
-CASAuthentication.prototype._handleTicket = function (req, res, next) {
 
-    var requestOptions = {
-        host: this.cas_host,
-        port: this.cas_port
-    };
-
-    console.info('in cas._handleTicket ...');
-
-    if (['1.0', '2.0', '3.0'].indexOf(this.cas_version) >= 0) {
-        requestOptions.method = 'GET';
-        requestOptions.path = url.format({
-            pathname: this.cas_path + this._validateUri,
-            query: {
-                service: this.service_url,
-                ticket: req.query.ticket
-            }
-        });
-    }
-    else if (this.cas_version === 'saml1.1') {
-        var now = new Date();
-        var post_data = '<?xml version="1.0" encoding="utf-8"?>\n' +
-            '<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">\n' +
-            '  <SOAP-ENV:Header/>\n' +
-            '  <SOAP-ENV:Body>\n' +
-            '    <samlp:Request xmlns:samlp="urn:oasis:names:tc:SAML:1.0:protocol" MajorVersion="1"\n' +
-            '      MinorVersion="1" RequestID="_' + req.host + '.' + now.getTime() + '"\n' +
-            '      IssueInstant="' + now.toISOString() + '">\n' +
-            '      <samlp:AssertionArtifact>\n' +
-            '        ' + req.query.ticket + '\n' +
-            '      </samlp:AssertionArtifact>\n' +
-            '    </samlp:Request>\n' +
-            '  </SOAP-ENV:Body>\n' +
-            '</SOAP-ENV:Envelope>';
-
-        requestOptions.method = 'POST';
-        requestOptions.path = url.format({
-            pathname: this.cas_path + this._validateUri,
-            query: {
-                TARGET: this.service_url + url.parse(req.originalUrl).pathname,
-                ticket: ''
-            }
-        });
-        requestOptions.headers = {
-            'Content-Type': 'text/xml',
-            'Content-Length': Buffer.byteLength(post_data)
-        };
-    }
-
-    console.info('requesting: ' + JSON.stringify(requestOptions), null, 2);
-    var request = this.request_client.request(requestOptions, function (response) {
-        response.setEncoding('utf8');
-        var body = '';
-        response.on('data', function (chunk) {
-            return body += chunk;
-        }.bind(this));
-        response.on('end', function () {
-            console.info('ticket data received: ' + body);
-            this._validate(body, function (err, user, attributes) {
-                if (err) {
-                    res.status(401).end();
-                }
-                else {
-                    req.session[this.session_name] = user;
-                    if (this.session_info) {
-                        req.session[this.session_info] = attributes || {};
-                    }
-                    res.redirect(req.session.cas_return_to);
-                }
-            }.bind(this));
-        }.bind(this));
-        response.on('error', function (err) {
-            res.status(401).end();
-        }.bind(this));
-    }.bind(this));
-
-    request.on('error', function (err) {
-        res.status(401).end();
-    }.bind(this));
-
-    if (this.cas_version === 'saml1.1') {
-        request.write(post_data);
-    }
-    request.end();
-
-    console.info('end of cas._handleTicket ...');
-};
 /**
  * Handles the ticket generated by the CAS login requester and validates it with the CAS login acceptor.
  *
  * @param ticket {string} the CAS service ticket to be validated
- * @param hostname {string} the requesting host, neded for SAML type of validation
+ * @param serviceUrl {string} the service URL to be used for ticket validation
  * @param callback {function} callback will be called with callback(err, user, attributes)
  *   err ... error
  *   user ... user ID
  *   attributes ... additional user attributes, if any have been returned
  */
-CASAuthentication.prototype._handleTicketAjax = function (ticket, hostname, callback) {
+CASAuthentication.prototype._handleTicketAjax = function (ticket, serviceUrl, callback) {
+    var validateFunction;
+    var requestOptions;
 
-    var requestOptions = {
-        host: this.cas_host,
-        port: this.cas_port
-    };
+    console.info('+++++++++++++__+_+_+_+_+_+_+_  in cas._handleTicketAjax ...');
 
-    console.info('+++++++++++++__+_+_+_+_+_+_+_  in cas._handleTicket ...');
+    console.log('===========> ... validate function is: ' + this._validate);
+
+    validateFunction = this._validate;
+    console.log('====> ... cas_url: ' + this.cas_url);
 
     if (['1.0', '2.0', '3.0'].indexOf(this.cas_version) >= 0) {
-        requestOptions.method = 'GET';
-        requestOptions.path = url.format({
-            pathname: this.cas_path + this._validateUri,
-            query: {
-                service: this.service_url,
+        requestOptions = {
+            uri: this.cas_url + (this.cas_version === '3.0' ? '/p3/serviceValidate' : '/serviceValidate'),
+            qs: {
+                service: serviceUrl,
                 ticket: ticket
             }
-        });
-    }
-    else if (this.cas_version === 'saml1.1') {
-        var now = new Date();
-        var post_data = '<?xml version="1.0" encoding="utf-8"?>\n' +
-            '<SOAP-ENV:Envelope xmlns:SOAP-ENV="http://schemas.xmlsoap.org/soap/envelope/">\n' +
-            '  <SOAP-ENV:Header/>\n' +
-            '  <SOAP-ENV:Body>\n' +
-            '    <samlp:Request xmlns:samlp="urn:oasis:names:tc:SAML:1.0:protocol" MajorVersion="1"\n' +
-            '      MinorVersion="1" RequestID="_' + hostname + '.' + now.getTime() + '"\n' +
-            '      IssueInstant="' + now.toISOString() + '">\n' +
-            '      <samlp:AssertionArtifact>\n' +
-            '        ' + ticket + '\n' +
-            '      </samlp:AssertionArtifact>\n' +
-            '    </samlp:Request>\n' +
-            '  </SOAP-ENV:Body>\n' +
-            '</SOAP-ENV:Envelope>';
-
-        requestOptions.method = 'POST';
-        requestOptions.path = url.format({
-            pathname: this.cas_path + this._validateUri,
-            query: {
-                TARGET: this.service_url,
-                ticket: ''
-            }
-        });
-        requestOptions.headers = {
-            'Content-Type': 'text/xml',
-            'Content-Length': Buffer.byteLength(post_data)
         };
     }
 
     console.info('requesting: ' + JSON.stringify(requestOptions), null, 2);
-    var request = this.request_client.request(requestOptions, function (response) {
-        response.setEncoding('utf8');
-        var body = '';
-        response.on('data', function (chunk) {
-            return body += chunk;
-        }.bind(this));
-        response.on('end', function () {
-            console.info('ticket data received: ' + body);
-            this._validate(body, function (err, user, attributes) {
-                if (err) {
-                    callback(err);
-                }
-                else {
-                    callback(null, user, attributes);
-                }
-            }.bind(this));
-        }.bind(this));
-        response.on('error', function (err) {
+    request.get(requestOptions, function (err, response, body) {
+        if (err) {
             callback(err);
-        }.bind(this));
-    }.bind(this));
+        }
 
-    request.on('error', function (err) {
-        callback(err);
-    }.bind(this));
-
-    if (this.cas_version === 'saml1.1') {
-        request.write(post_data);
-    }
-    request.end();
+        console.info('ticket data received: ' + body);
+        validateFunction(body, function (err, user, attributes) {
+            if (err) {
+                callback(err);
+            }
+            else {
+                callback(null, user, attributes);
+            }
+        });
+    });
 
     console.info('end of cas._handleTicket ...');
-};
+}
+;
 
 module.exports = CASAuthentication;

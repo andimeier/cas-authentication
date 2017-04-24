@@ -28,6 +28,7 @@
     "url": "https://github.com/andimeier/cas-authentication-ajax.git"
   },
   "dependencies": {
+    "request": "^2.81.0",
     "xml2js": "^0.4.8"
   },
   "devDependencies": {
