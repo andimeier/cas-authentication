@@ -99,8 +99,6 @@ CASAuthentication.prototype.validateTicketCas23 = function (body, callback) {
  */
 function CASAuthentication(options) {
 
-    console.info('init CAS, options are: ' + JSON.stringify(options));
-
     if (!options || typeof options !== 'object') {
         throw new Error('CAS Authentication was not given a valid configuration object.');
     }
@@ -123,8 +121,6 @@ function CASAuthentication(options) {
     } else {
         throw new Error('The supplied CAS version ("' + this.cas_version + '") is not supported.');
     }
-
-    console.log('===========> validate function is: ' + this._validate);
 
     this.cas_url = options.cas_url;
     var parsed_cas_url = url.parse(this.cas_url);
@@ -151,8 +147,6 @@ function CASAuthentication(options) {
     this.bounce_redirect = this.bounce_redirect.bind(this);
     this.block = this.block.bind(this);
     this.logout = this.logout.bind(this);
-
-    console.log('====> cas_url: ' + this.cas_url);
 }
 
 
@@ -302,10 +296,7 @@ CASAuthentication.prototype._handleTicketAjax = function (ticket, serviceUrl, ca
 
     console.info('+++++++++++++__+_+_+_+_+_+_+_  in cas._handleTicketAjax ...');
 
-    console.log('===========> ... validate function is: ' + this._validate);
-
     validateFunction = this._validate;
-    console.log('====> ... cas_url: ' + this.cas_url);
 
     if (['1.0', '2.0', '3.0'].indexOf(this.cas_version) >= 0) {
         requestOptions = {
