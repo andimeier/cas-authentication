@@ -94,6 +94,46 @@ CASAuthentication.prototype.validateTicketCas23 = function (body, callback) {
 
 
 /**
+ * if the given content is a valid CAS logout request (XML document for single logout), it extracts
+ * the included service ticket ID and returns it
+ *
+ * @param document {string} the XML document which might be a logout request
+ * @param callback {function} callback function that will be called with (err, serviceTicket)
+ */
+CASAuthentication.prototype.getTicketFromLogoutRequest = function (body, callback) {
+    parseXML(body, {
+        trim: true,
+        normalize: true,
+        explicitArray: false,
+        tagNameProcessors: [XMLprocessors.normalize, XMLprocessors.stripPrefix]
+    }, function (err, result) {
+        if (err) {
+            console.info('(((((---))))))) Bad XML document, could not recognize logout document');
+            return callback(new Error('Response from CAS server was bad.'));
+        }
+        try {
+            debugger;
+            console.info('(((((---))))))) response: ' + JSON.stringify(result));
+            var serviceTicket = result.logoutrequest.sessionindex;
+            if (serviceTicket) {
+                return callback(null, serviceTicket);
+            } else {
+                return callback({
+                    errorMessage: 'no valid CAS logout document',
+                    code: 'NO_VALID_CAS_LOGOUT',
+                    description: 'service ticket could not be found in the XML logout document'
+                });
+            }
+        }
+        catch (err) {
+            console.info('(((((---))))))) exception when doing CAS authentication: ' + JSON.stringify(err));
+            return callback(new Error('CAS authentication failed.'));
+        }
+    });
+};
+
+
+/**
  * @param {CAS_options} options
  * @constructor
  */
