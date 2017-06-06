@@ -208,6 +208,7 @@ function handleTicketAjax(ticket, serviceUrl, callback) {
     request.get(requestOptions, function (err, response, body) {
         if (err) {
             callback(err);
+            return;
         }
 
         console.info('ticket data received: ' + body);
