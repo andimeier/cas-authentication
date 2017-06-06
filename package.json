@@ -1,6 +1,6 @@
 {
   "name": "cas-authentication-ajax",
-  "version": "0.0.8",
+  "version": "0.0.9",
   "description": "A CAS authentication library designed to be used as middleware for an Express server.",
   "keywords": [
     "cas",
