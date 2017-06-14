@@ -141,9 +141,13 @@ function login(req, res, next) {
     // Set up the query parameters.
     var query = {
         //service: req.query.returnTo || this.service_url + url.parse(req.originalUrl).pathname,
-        service: options.service_url, // for AJAX
-        renew: options.renew
+        service: options.service_url // for AJAX
     };
+
+    // only add renew parameter if renew is truish
+    if (options.renew) {
+        query.renew = 'true'; // according to CAS spec, the string "true" should be used as a truish value
+    }
 
     // Redirect to the CAS login.
     res.redirect(options.cas_url + url.format({
